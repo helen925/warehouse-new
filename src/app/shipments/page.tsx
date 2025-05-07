@@ -67,22 +67,29 @@ const formatDateDisplay = (dateString?: string): string => {
   }
 };
 
+// 提取基础单号（去除子单号后缀）
+const getBaseOperationNumber = (operationNumber: string): string => {
+  // 匹配基本格式：字母+数字，可能后跟-数字
+  const match = operationNumber.match(/^([A-Za-z]+\d+)(?:-\d+)?$/);
+  return match ? match[1] : operationNumber;
+};
+
 // 按操作单号汇总货物数据
 const summarizeShipmentsByOperationNumber = (shipments: Shipment[]): ShipmentSummary[] => {
   // 使用Map按操作单号分组
   const summaryMap = new Map<string, ShipmentSummary>();
   
   shipments.forEach(shipment => {
-    const operationNumber = shipment.operationNumber;
+    const baseOperationNumber = getBaseOperationNumber(shipment.operationNumber);
     const quantity = parseFloat(shipment.quantity.toString() || "0");
     const actualWeight = parseFloat(shipment.actualWeight.toString() || "0");
     const cbm = parseFloat(shipment.cbm.toString() || "0");
     const shippingWeight = parseFloat(shipment.totalShippingWeight?.toString() || "0");
     const isInStock = shipment.status !== '已出库';
     
-    if (summaryMap.has(operationNumber)) {
+    if (summaryMap.has(baseOperationNumber)) {
       // 更新现有汇总数据
-      const summary = summaryMap.get(operationNumber)!;
+      const summary = summaryMap.get(baseOperationNumber)!;
       summary.totalQuantity += quantity;
       summary.totalActualWeight += actualWeight;
       summary.totalCBM += cbm * quantity; // CBM乘以数量
@@ -95,8 +102,8 @@ const summarizeShipmentsByOperationNumber = (shipments: Shipment[]): ShipmentSum
       }
     } else {
       // 创建新的汇总数据
-      summaryMap.set(operationNumber, {
-        operationNumber,
+      summaryMap.set(baseOperationNumber, {
+        operationNumber: baseOperationNumber,
         totalQuantity: quantity,
         totalActualWeight: actualWeight,
         totalCBM: cbm * quantity, // CBM乘以数量
@@ -113,18 +120,27 @@ const summarizeShipmentsByOperationNumber = (shipments: Shipment[]): ShipmentSum
     .sort((a, b) => a.operationNumber.localeCompare(b.operationNumber));
 };
 
-// 对货物数据进行排序：先按操作单号排序，再按出库日期排序，最后按状态排序
+// 对货物数据进行排序：先按基础操作单号排序，再按出库日期排序，最后按状态排序
 const sortShipments = (shipments: Shipment[]): Shipment[] => {
   return [...shipments].sort((a, b) => {
-    // 首先按操作单号排序
-    const operationNumberCompare = a.operationNumber.localeCompare(b.operationNumber);
-    if (operationNumberCompare !== 0) {
-      return operationNumberCompare;
+    // 首先按基础操作单号排序
+    const aBaseOp = getBaseOperationNumber(a.operationNumber);
+    const bBaseOp = getBaseOperationNumber(b.operationNumber);
+    const baseOpCompare = aBaseOp.localeCompare(bBaseOp);
+    
+    if (baseOpCompare !== 0) {
+      return baseOpCompare;
+    }
+    
+    // 再按具体子单号排序
+    const opCompare = a.operationNumber.localeCompare(b.operationNumber);
+    if (opCompare !== 0) {
+      return opCompare;
     }
     
     // 操作单号相同时，按出库日期排序（若有）
-    const aOutDate = a.outboundDate || "";
-    const bOutDate = b.outboundDate || "";
+    const aOutDate = typeof a.outboundDate === 'string' ? a.outboundDate : "";
+    const bOutDate = typeof b.outboundDate === 'string' ? b.outboundDate : "";
     const outDateCompare = aOutDate.localeCompare(bOutDate);
     if (outDateCompare !== 0) {
       return outDateCompare;
@@ -152,6 +168,7 @@ export default function ShipmentsPage() {
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [summaries, setSummaries] = useState<ShipmentSummary[]>([]);
   const [showSummary, setShowSummary] = useState<boolean>(false);
+  const [groupColors, setGroupColors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     // 获取保存的货物数据
@@ -180,28 +197,23 @@ export default function ShipmentsPage() {
       // 计算汇总数据
       const shipmentSummaries = summarizeShipmentsByOperationNumber(sortedShipments);
       setSummaries(shipmentSummaries);
+      
+      // 为相同基础单号的行分配背景颜色
+      const colors: Record<string, string> = {};
+      const baseNumbers = [...new Set(sortedShipments.map(s => getBaseOperationNumber(s.operationNumber)))];
+      
+      // 交替分配背景色
+      baseNumbers.forEach((baseNum, index) => {
+        colors[baseNum] = index % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+      });
+      
+      setGroupColors(colors);
     } else {
       // 示例数据
       const today = new Date().toISOString().split('T')[0];
       const exampleShipments = [
         {
-          operationNumber: "H250509",
-          materialParam: "6000",
-          quantity: 1,
-          actualWeight: "20.000",
-          length: "20.00",
-          width: "30.00",
-          height: "20.00",
-          materialWeight: "2.000",
-          cbm: "0.0120",
-          totalWeight: "20.000",
-          totalShippingWeight: "20.000",
-          destination: "",
-          inboundDate: "2023-05-01",
-          status: '在库'
-        },
-        {
-          operationNumber: "H250509",
+          operationNumber: "H250509-1",
           materialParam: "6000",
           quantity: 1,
           actualWeight: "20.000",
@@ -213,7 +225,23 @@ export default function ShipmentsPage() {
           totalWeight: "20.000",
           totalShippingWeight: "20.000",
           destination: "沙特",
-          inboundDate: "2023-05-02",
+          inboundDate: "2023-05-01",
+          status: '在库'
+        },
+        {
+          operationNumber: "H250509-2",
+          materialParam: "6000",
+          quantity: 1,
+          actualWeight: "20.000",
+          length: "20.00",
+          width: "30.00",
+          height: "20.00",
+          materialWeight: "2.000",
+          cbm: "0.0120",
+          totalWeight: "20.000",
+          totalShippingWeight: "20.000",
+          destination: "沙特",
+          inboundDate: "2023-05-01",
           status: '在库'
         },
         {
@@ -233,7 +261,7 @@ export default function ShipmentsPage() {
           status: '在库'
         },
         {
-          operationNumber: "H250509",
+          operationNumber: "H250509-3",
           materialParam: "6000",
           quantity: 1,
           actualWeight: "20.000",
@@ -245,8 +273,9 @@ export default function ShipmentsPage() {
           totalWeight: "20.000",
           totalShippingWeight: "20.000",
           destination: "沙特",
-          inboundDate: "2023-05-07",
-          status: "已出库"
+          inboundDate: "2023-05-01",
+          status: "已出库",
+          outboundDate: "2023-05-07"
         }
       ];
 
@@ -257,6 +286,17 @@ export default function ShipmentsPage() {
       // 计算汇总数据
       const shipmentSummaries = summarizeShipmentsByOperationNumber(sortedShipments);
       setSummaries(shipmentSummaries);
+      
+      // 为相同基础单号的行分配背景颜色
+      const colors: Record<string, string> = {};
+      const baseNumbers = [...new Set(sortedShipments.map(s => getBaseOperationNumber(s.operationNumber)))];
+      
+      // 交替分配背景色
+      baseNumbers.forEach((baseNum, index) => {
+        colors[baseNum] = index % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+      });
+      
+      setGroupColors(colors);
     }
   }, []);
 
@@ -300,7 +340,10 @@ export default function ShipmentsPage() {
               </thead>
               <tbody className="divide-y divide-gray-100 border-t border-gray-100">
                 {summaries.map((summary, index) => (
-                  <tr className="hover:bg-gray-50" key={index}>
+                  <tr 
+                    className={`hover:bg-gray-100 ${groupColors[summary.operationNumber] || ''}`} 
+                    key={index}
+                  >
                     <td className="border px-3 py-2 font-medium">{summary.operationNumber}</td>
                     <td className="border px-3 py-2">{summary.totalQuantity}</td>
                     <td className="border px-3 py-2">{summary.totalActualWeight.toFixed(3)}</td>
@@ -341,47 +384,58 @@ export default function ShipmentsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 border-t border-gray-100">
-              {shipments.map((shipment, index) => (
-                <tr className="hover:bg-gray-50" key={index}>
-                  <td className="border px-3 py-2 font-medium">{shipment.operationNumber}</td>
-                  <td className="border px-3 py-2">{shipment.materialParam}</td>
-                  <td className="border px-3 py-2">{shipment.quantity}</td>
-                  <td className="border px-3 py-2">{shipment.actualWeight}</td>
-                  <td className="border px-3 py-2">{shipment.length}</td>
-                  <td className="border px-3 py-2">{shipment.width}</td>
-                  <td className="border px-3 py-2">{shipment.height}</td>
-                  <td className="border px-3 py-2">{shipment.materialWeight}</td>
-                  <td className="border px-3 py-2">{shipment.cbm}</td>
-                  <td className="border px-3 py-2">{shipment.totalWeight}</td>
-                  <td className="border px-3 py-2">{shipment.totalShippingWeight}</td>
-                  <td className="border px-3 py-2">{shipment.destination}</td>
-                  <td className="border px-3 py-2">{formatDateDisplay(shipment.inboundDate)}</td>
-                  <td className="border px-3 py-2">
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${shipment.status === '已出库' ? 'bg-yellow-50 text-yellow-600' : 'bg-green-50 text-green-600'}`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${shipment.status === '已出库' ? 'bg-yellow-600' : 'bg-green-600'}`}></span>
-                      {shipment.status || '在库'}
-                    </span>
-                  </td>
-                  <td className="border px-3 py-2">
-                    <div className="flex gap-2">
-                      <Link
-                        href={`/shipments/${index + 1}`}
-                        className="text-blue-600 hover:underline"
-                      >
-                        详情
-                      </Link>
-                      {shipment.status !== '已出库' && (
+              {shipments.map((shipment, index) => {
+                const baseOpNumber = getBaseOperationNumber(shipment.operationNumber);
+                const rowColor = groupColors[baseOpNumber] || '';
+                return (
+                  <tr key={index} className={`hover:bg-gray-100 ${rowColor}`}>
+                    <td className="border px-3 py-2 font-medium">
+                      <div className="flex">
+                        {shipment.operationNumber !== baseOpNumber && (
+                          <span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1.5 mt-1.5"></span>
+                        )}
+                        {shipment.operationNumber}
+                      </div>
+                    </td>
+                    <td className="border px-3 py-2">{shipment.materialParam}</td>
+                    <td className="border px-3 py-2">{shipment.quantity}</td>
+                    <td className="border px-3 py-2">{shipment.actualWeight}</td>
+                    <td className="border px-3 py-2">{shipment.length}</td>
+                    <td className="border px-3 py-2">{shipment.width}</td>
+                    <td className="border px-3 py-2">{shipment.height}</td>
+                    <td className="border px-3 py-2">{shipment.materialWeight}</td>
+                    <td className="border px-3 py-2">{shipment.cbm}</td>
+                    <td className="border px-3 py-2">{shipment.totalWeight}</td>
+                    <td className="border px-3 py-2">{shipment.totalShippingWeight}</td>
+                    <td className="border px-3 py-2">{shipment.destination}</td>
+                    <td className="border px-3 py-2">{formatDateDisplay(shipment.inboundDate)}</td>
+                    <td className="border px-3 py-2">
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${shipment.status === '已出库' ? 'bg-yellow-50 text-yellow-600' : 'bg-green-50 text-green-600'}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${shipment.status === '已出库' ? 'bg-yellow-600' : 'bg-green-600'}`}></span>
+                        {shipment.status || '在库'}
+                      </span>
+                    </td>
+                    <td className="border px-3 py-2">
+                      <div className="flex gap-2">
                         <Link
-                          href={`/operations/outbound?shipmentId=${index + 1}`}
-                          className="text-green-600 hover:underline"
+                          href={`/shipments/${index + 1}`}
+                          className="text-blue-600 hover:underline"
                         >
-                          出库
+                          详情
                         </Link>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        {shipment.status !== '已出库' && (
+                          <Link
+                            href={`/operations/outbound?shipmentId=${index + 1}`}
+                            className="text-green-600 hover:underline"
+                          >
+                            出库
+                          </Link>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

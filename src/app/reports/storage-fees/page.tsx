@@ -112,6 +112,36 @@ const formatCurrency = (value: number): string => {
   return `${value.toFixed(2)} USD`;
 };
 
+// 提取基础单号（去除子单号后缀）
+const getBaseOperationNumber = (operationNumber: string): string => {
+  // 匹配基本格式：字母+数字，可能后跟-数字
+  const match = operationNumber.match(/^([A-Za-z]+\d+)(?:-\d+)?$/);
+  return match ? match[1] : operationNumber;
+};
+
+// 检查两个货物是否属于同一组（相同基础单号，相同入库日期，相同出库日期）
+const isSameShipmentGroup = (a: Shipment, b: Shipment): boolean => {
+  const aBaseOp = getBaseOperationNumber(a.operationNumber);
+  const bBaseOp = getBaseOperationNumber(b.operationNumber);
+  
+  // 基础单号必须相同
+  if (aBaseOp !== bBaseOp) return false;
+  
+  // 入库日期必须相同
+  if (a.inboundDate !== b.inboundDate) return false;
+  
+  // 如果都已出库，出库日期也必须相同
+  if (a.status === '已出库' && b.status === '已出库') {
+    return a.outboundDate === b.outboundDate;
+  }
+  
+  // 如果一个已出库一个在库，不是同组
+  if (a.status !== b.status) return false;
+  
+  // 其他情况（都在库）视为同组
+  return true;
+};
+
 // 处理日期范围筛选
 const filterShipmentsByDateRange = (shipments: ShipmentWithDetails[], days: number | string): ShipmentWithDetails[] => {
   if (days === 'all') return shipments;
@@ -123,6 +153,69 @@ const filterShipmentsByDateRange = (shipments: ShipmentWithDetails[], days: numb
   return shipments.filter(shipment => {
     if (!shipment.inboundDate) return false;
     return shipment.inboundDate >= cutoffDateString;
+  });
+};
+
+// 合并同组货物为一条记录
+const mergeShipmentGroups = (shipments: ShipmentWithDetails[]): ShipmentWithDetails[] => {
+  if (shipments.length <= 1) return shipments;
+  
+  // 按基础单号和日期分组
+  const groupMap: Map<string, ShipmentWithDetails[]> = new Map();
+  
+  shipments.forEach(shipment => {
+    const baseOp = getBaseOperationNumber(shipment.operationNumber);
+    // 创建分组键：基础单号 + 入库日期 + 出库日期（或状态）
+    const groupKey = `${baseOp}|${shipment.inboundDate || ''}|${shipment.status === '已出库' ? (shipment.outboundDate || '') : 'in'}`;
+    
+    if (!groupMap.has(groupKey)) {
+      groupMap.set(groupKey, []);
+    }
+    
+    groupMap.get(groupKey)!.push(shipment);
+  });
+  
+  // 合并每个组内的货物
+  const mergedShipments: ShipmentWithDetails[] = [];
+  
+  groupMap.forEach(group => {
+    if (group.length === 1) {
+      // 如果组内只有一个货物，直接添加
+      mergedShipments.push(group[0]);
+    } else {
+      // 合并组内多个货物
+      const firstShipment = group[0];
+      const baseOp = getBaseOperationNumber(firstShipment.operationNumber);
+      
+      // 创建合并后的货物记录
+      const mergedShipment: ShipmentWithDetails = {
+        ...firstShipment,
+        operationNumber: `${baseOp}(${group.length}个子单)`, // 显示为基础单号(N个子单)
+        quantity: group.reduce((sum, s) => sum + parseFloat(s.quantity.toString() || "0"), 0),
+        cbm: group.reduce((sum, s) => sum + parseFloat(s.cbm.toString() || "0"), 0).toFixed(4),
+        // 使用第一个货物的其他属性
+        feeDetails: {
+          ...firstShipment.feeDetails,
+          // 重新计算合并后的费用
+          freeDaysFee: group.reduce((sum, s) => sum + s.feeDetails.freeDaysFee, 0),
+          standardDaysFee: group.reduce((sum, s) => sum + s.feeDetails.standardDaysFee, 0),
+          extendedDaysFee: group.reduce((sum, s) => sum + s.feeDetails.extendedDaysFee, 0),
+          totalFee: group.reduce((sum, s) => sum + s.feeDetails.totalFee, 0)
+        }
+      };
+      
+      // 更新合并后的仓储费用
+      mergedShipment.storageFee = mergedShipment.feeDetails.totalFee.toFixed(2);
+      
+      mergedShipments.push(mergedShipment);
+    }
+  });
+  
+  // 按操作单号排序
+  return mergedShipments.sort((a, b) => {
+    const aBaseOp = getBaseOperationNumber(a.operationNumber);
+    const bBaseOp = getBaseOperationNumber(b.operationNumber);
+    return aBaseOp.localeCompare(bBaseOp) || a.operationNumber.localeCompare(b.operationNumber);
   });
 };
 
@@ -161,21 +254,44 @@ export default function StorageFeesPage() {
         const cbmValue = parseFloat(updatedShipment.cbm.toString() || "0");
         
         if (!isNaN(cbmValue)) {
-          // 已出库的货物使用记录的费用
-          let fee: StorageFeeDetails;
+          // 计算费用详情，无论是否已出库
+          const feeDetails = calculateStorageFee(cbmValue, storageDays);
           
-          if (updatedShipment.status === '已出库' && updatedShipment.storageFee) {
-            const feeValue = parseFloat(updatedShipment.storageFee.toString());
-            fee = calculateStorageFee(cbmValue, storageDays);
-            // 使用记录的总费用，但保留详细计算
-            fee.totalFee = feeValue;
+          // 已出库的货物可能有记录的费用
+          if (updatedShipment.status === '已出库') {
+            // 检查是否有记录的费用
+            const storedFee = updatedShipment.storageFee;
+            const parsedStoredFee = storedFee ? parseFloat(storedFee.toString()) : NaN;
+            
+            // 如果没有有效的记录费用或记录费用为0，则使用计算出的费用
+            if (isNaN(parsedStoredFee) || parsedStoredFee <= 0) {
+              updatedShipment.storageFee = feeDetails.totalFee.toFixed(2);
+              
+              // 更新原始数组中的storageFee
+              const index = storedShipments.findIndex((s: Shipment) => 
+                s.operationNumber === updatedShipment.operationNumber && 
+                s.inboundDate === updatedShipment.inboundDate
+              );
+              
+              if (index !== -1) {
+                // 这里只是为了修复已出库货物显示为0的问题，不实际修改localStorage
+                // 如果需要持久化，可以在用户操作后修改localStorage
+                storedShipments[index].storageFee = feeDetails.totalFee.toFixed(2);
+              }
+            } else {
+              // 保留记录的费用
+              updatedShipment.storageFee = parsedStoredFee.toFixed(2);
+            }
           } else {
-            fee = calculateStorageFee(cbmValue, storageDays);
-            updatedShipment.storageFee = fee.totalFee.toFixed(2);
+            // 在库货物：使用实时计算的费用
+            updatedShipment.storageFee = feeDetails.totalFee.toFixed(2);
           }
           
-          updatedShipment.feeDetails = fee;
-          total += fee.totalFee;
+          // 保存费用详情用于显示
+          updatedShipment.feeDetails = feeDetails;
+          
+          // 将实际使用的费用（可能是记录的或计算的）加到总费用中
+          total += parseFloat(updatedShipment.storageFee.toString());
         }
         
         return updatedShipment;
@@ -184,21 +300,22 @@ export default function StorageFeesPage() {
       // 应用日期范围筛选
       const filteredShipments = filterShipmentsByDateRange(processedShipments, dateRange);
       
+      // 合并同组货物
+      const mergedShipments = mergeShipmentGroups(filteredShipments);
+      
       // 重新计算筛选后的总费用
-      if (filteredShipments.length !== processedShipments.length) {
-        total = filteredShipments.reduce((sum, shipment) => 
-          sum + shipment.feeDetails.totalFee, 0);
-      }
+      total = mergedShipments.reduce((sum, shipment) => 
+        sum + parseFloat(shipment.storageFee?.toString() || "0"), 0);
       
       // 为不同的操作单号分配交替的颜色
       const colors: Record<string, string> = {};
-      const operations = [...new Set(filteredShipments.map(s => s.operationNumber))];
+      const operations = [...new Set(mergedShipments.map(s => getBaseOperationNumber(s.operationNumber)))];
       operations.forEach((op, index) => {
         colors[op] = index % 2 === 0 ? 'bg-white' : 'bg-gray-50';
       });
       
       setOperationColors(colors);
-      setShipments(filteredShipments);
+      setShipments(mergedShipments);
       setTotalFee(total);
     }
   }, [dateRange]);
@@ -333,12 +450,20 @@ export default function StorageFeesPage() {
             {shipments.map((shipment, index) => {
               const shipmentId = `${shipment.operationNumber}-${shipment.inboundDate}`;
               const isDetailOpen = selectedShipment === shipmentId;
-              const rowColor = operationColors[shipment.operationNumber] || 'bg-white';
+              const baseOpNumber = getBaseOperationNumber(shipment.operationNumber);
+              const rowColor = operationColors[baseOpNumber] || 'bg-white';
               
               return (
                 <Fragment key={index}>
                   <tr className={`hover:bg-gray-100 ${rowColor}`}>
-                    <td className="px-6 py-4 font-medium">{shipment.operationNumber}</td>
+                    <td className="px-6 py-4 font-medium">
+                      <div className="flex">
+                        {shipment.operationNumber !== baseOpNumber && (
+                          <span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1.5 mt-1.5"></span>
+                        )}
+                        {shipment.operationNumber}
+                      </div>
+                    </td>
                     <td className="px-6 py-4">{shipment.materialParam}</td>
                     <td className="px-6 py-4 font-semibold">{formatDateDisplay(shipment.inboundDate)}</td>
                     <td className="px-6 py-4">{shipment.storageDays} 天</td>

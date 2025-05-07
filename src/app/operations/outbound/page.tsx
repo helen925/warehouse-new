@@ -86,6 +86,13 @@ const formatDate = (date: Date): string => {
 // 获取今天的日期
 const today = formatDate(new Date());
 
+// 提取基础单号（去除子单号后缀）
+const getBaseOperationNumber = (operationNumber: string): string => {
+  // 匹配基本格式：字母+数字，可能后跟-数字
+  const match = operationNumber.match(/^([A-Za-z]+\d+)(?:-\d+)?$/);
+  return match ? match[1] : operationNumber;
+};
+
 export default function OutboundOperationPage() {
   const router = useRouter();
   const [shipments, setShipments] = useState<Shipment[]>([]);
@@ -102,6 +109,9 @@ export default function OutboundOperationPage() {
     standardDays: number;
     extendedDays: number;
   } | null>(null);
+  const [enableBatchOutbound, setEnableBatchOutbound] = useState<boolean>(false);
+  const [relatedShipments, setRelatedShipments] = useState<Shipment[]>([]);
+  const [batchSelections, setBatchSelections] = useState<Record<number, boolean>>({});
 
   // 从localStorage获取货物数据
   useEffect(() => {
@@ -117,14 +127,43 @@ export default function OutboundOperationPage() {
     }
   }, []);
 
-  // 当选择货物或出库日期变化时，重新计算费用
+  // 获取URL参数
   useEffect(() => {
-    if (selectedShipmentId && outboundDate) {
-      const shipment = shipments[parseInt(selectedShipmentId)];
+    const urlParams = new URLSearchParams(window.location.search);
+    const shipmentId = urlParams.get('shipmentId');
+    if (shipmentId) {
+      setSelectedShipmentId((parseInt(shipmentId) - 1).toString()); // 调整索引
+    }
+  }, []);
+
+  // 当选择货物时，查找相关的同单号货物
+  useEffect(() => {
+    if (selectedShipmentId && shipments.length > 0) {
+      const index = parseInt(selectedShipmentId);
+      const shipment = shipments[index];
       if (shipment) {
         setSelectedShipment(shipment);
         
-        const days = calculateStorageDays(shipment.inboundDate, outboundDate);
+        // 查找同一基础单号且同一天入库的其他货物
+        const baseOpNumber = getBaseOperationNumber(shipment.operationNumber);
+        const inboundDateStr = typeof shipment.inboundDate === 'string' ? shipment.inboundDate : '';
+        const sameGroupShipments = shipments.filter((s, idx) => {
+          const isSameGroup = s !== shipment && 
+            getBaseOperationNumber(s.operationNumber) === baseOpNumber && 
+            (s.inboundDate || '') === inboundDateStr;
+          
+          // 如果是同组，初始化为选中状态
+          if (isSameGroup) {
+            setBatchSelections(prev => ({...prev, [idx]: true}));
+          }
+          
+          return isSameGroup;
+        });
+        
+        setRelatedShipments(sameGroupShipments);
+        
+        // 计算当前选择货物的费用
+        const days = calculateStorageDays(inboundDateStr, outboundDate);
         setStorageDays(days);
         
         const cbmValue = parseFloat(shipment.cbm.toString());
@@ -137,8 +176,69 @@ export default function OutboundOperationPage() {
       setSelectedShipment(null);
       setStorageDays(0);
       setStorageFee(null);
+      setRelatedShipments([]);
+      setBatchSelections({});
     }
   }, [selectedShipmentId, outboundDate, shipments]);
+
+  // 切换单个相关货物的选择状态
+  const toggleShipmentSelection = (index: number) => {
+    setBatchSelections(prev => ({...prev, [index]: !prev[index]}));
+  };
+
+  // 切换所有相关货物的选择状态
+  const toggleAllSelections = () => {
+    const allSelected = relatedShipments.every((_, index) => 
+      batchSelections[shipments.indexOf(_)] === true
+    );
+    
+    const newSelections = {...batchSelections};
+    relatedShipments.forEach((s, i) => {
+      const index = shipments.indexOf(s);
+      newSelections[index] = !allSelected;
+    });
+    
+    setBatchSelections(newSelections);
+  };
+
+  // 获取当前选中的相关货物
+  const getSelectedRelatedShipments = (): Shipment[] => {
+    return relatedShipments.filter((s, i) => 
+      batchSelections[shipments.indexOf(s)] === true
+    );
+  };
+
+  // 计算批量出库费用
+  const calculateBatchFee = (): {
+    totalCBM: number;
+    fee: {
+      freeDaysFee: number;
+      standardDaysFee: number;
+      extendedDaysFee: number;
+      totalFee: number;
+      freeDays: number;
+      standardDays: number;
+      extendedDays: number;
+    };
+  } | null => {
+    if (!selectedShipment || !storageFee) return null;
+    
+    // 获取选中的相关货物
+    const selectedRelatedShipments = getSelectedRelatedShipments();
+    
+    // 计算所有相关货物的总CBM
+    const allShipments = [selectedShipment, ...selectedRelatedShipments];
+    const totalCBM = allShipments.reduce((sum, s) => {
+      const cbm = parseFloat(s.cbm.toString() || "0");
+      return sum + (isNaN(cbm) ? 0 : cbm);
+    }, 0);
+    
+    // 使用总CBM计算费用
+    const days = calculateStorageDays(selectedShipment.inboundDate, outboundDate);
+    const fee = calculateStorageFee(totalCBM, days);
+    
+    return { totalCBM, fee };
+  };
 
   // 处理表单提交
   const handleSubmit = (e: React.FormEvent) => {
@@ -149,47 +249,70 @@ export default function OutboundOperationPage() {
       return;
     }
     
-    // 更新货物状态为"已出库"
-    const updatedShipments = [...shipments];
-    const index = parseInt(selectedShipmentId);
+    // 获取所有需要出库的货物（选中的主货物和相关货物）
+    const selectedRelatedShipments = getSelectedRelatedShipments();
+    const outboundShipments = enableBatchOutbound 
+      ? [selectedShipment, ...selectedRelatedShipments] 
+      : [selectedShipment];
     
-    // 使用类型断言解决TypeScript类型错误
-    updatedShipments[index] = {
-      ...updatedShipments[index],
-      status: '已出库',
-      outboundDate: outboundDate,
-      storageDays: storageDays,
-      storageFee: storageFee?.totalFee.toFixed(2)
-    } as Shipment;
+    // 计算费用（批量或单个）
+    const batchFee = enableBatchOutbound ? calculateBatchFee() : null;
     
     // 保存回localStorage
     const allShipments = localStorage.getItem('shipments') 
       ? JSON.parse(localStorage.getItem('shipments') || '[]')
       : [];
-      
-    // 找到所有货物中的索引并更新
-    const allIndex = allShipments.findIndex((s: Shipment) => 
-      s.operationNumber === selectedShipment.operationNumber && 
-      s.inboundDate === selectedShipment.inboundDate
-    );
     
-    if (allIndex !== -1) {
-      // 使用类型断言解决TypeScript类型错误
-      allShipments[allIndex] = {
-        ...allShipments[allIndex],
-        status: '已出库',
-        outboundDate: outboundDate,
-        storageDays: storageDays,
-        storageFee: storageFee?.totalFee.toFixed(2)
-      } as Shipment;
+    // 为每个要出库的货物更新状态
+    let updated = false;
+    outboundShipments.forEach(shipment => {
+      // 找到所有货物中的索引并更新
+      const allIndex = allShipments.findIndex((s: Shipment) => 
+        s.operationNumber === shipment.operationNumber && 
+        s.inboundDate === shipment.inboundDate
+      );
       
+      if (allIndex !== -1) {
+        // 更新货物状态
+        allShipments[allIndex] = {
+          ...allShipments[allIndex],
+          status: '已出库',
+          outboundDate: outboundDate,
+          storageDays: storageDays
+        } as Shipment;
+        
+        // 设置仓储费用
+        if (enableBatchOutbound && batchFee) {
+          // 批量出库：按比例分配总费用
+          const shipmentCBM = parseFloat(shipment.cbm.toString() || "0");
+          const proportion = shipmentCBM / batchFee.totalCBM;
+          allShipments[allIndex].storageFee = (batchFee.fee.totalFee * proportion).toFixed(2);
+        } else {
+          // 单个出库：使用当前计算的费用
+          allShipments[allIndex].storageFee = storageFee?.totalFee.toFixed(2);
+        }
+        
+        updated = true;
+      }
+    });
+    
+    if (updated) {
       localStorage.setItem('shipments', JSON.stringify(allShipments));
       
-      // 重定向到货物管理页面
-      alert("出库操作成功完成！");
+      // 提示消息并重定向
+      if (enableBatchOutbound) {
+        alert(`已成功出库 ${outboundShipments.length} 个货物！`);
+      } else {
+        alert("出库操作成功完成！");
+      }
+      
       router.push('/shipments');
     }
   };
+
+  // 计算批量出库的费用预览
+  const batchFeePreview = enableBatchOutbound ? calculateBatchFee() : null;
+  const selectedRelatedShipments = getSelectedRelatedShipments();
 
   return (
     <main className="container mx-auto px-4 py-8">
@@ -214,11 +337,14 @@ export default function OutboundOperationPage() {
                 required
               >
                 <option value="">请选择操作单号</option>
-                {shipments.map((shipment, index) => (
-                  <option key={index} value={index.toString()}>
-                    操作单号: {shipment.operationNumber} | 目的地: {shipment.destination} | 入库日期: {shipment.inboundDate || '未知'}
-                  </option>
-                ))}
+                {shipments.map((shipment, index) => {
+                  const baseOpNumber = getBaseOperationNumber(shipment.operationNumber);
+                  return (
+                    <option key={index} value={index.toString()}>
+                      操作单号: {shipment.operationNumber} {baseOpNumber !== shipment.operationNumber ? `(基础单号: ${baseOpNumber})` : ''} | 目的地: {shipment.destination} | 入库日期: {shipment.inboundDate || '未知'}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -238,6 +364,78 @@ export default function OutboundOperationPage() {
                 required
               />
             </div>
+
+            {relatedShipments.length > 0 && (
+              <div className="col-span-2">
+                <div className="rounded-md bg-yellow-50 p-4">
+                  <div className="flex">
+                    <div className="flex-shrink-0">
+                      <svg className="h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                    <div className="ml-3">
+                      <h3 className="text-sm font-medium text-yellow-800">发现相关子单号货物</h3>
+                      <div className="mt-2 text-sm text-yellow-700">
+                        <p>系统检测到 {relatedShipments.length} 个与当前选择货物相同基础单号且同一天入库的货物。</p>
+                        <div className="mt-2">
+                          <label className="inline-flex items-center">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                              checked={enableBatchOutbound}
+                              onChange={() => setEnableBatchOutbound(!enableBatchOutbound)}
+                            />
+                            <span className="ml-2 text-yellow-800 font-medium">批量出库（合并计算仓储费用）</span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {enableBatchOutbound && (
+                    <div className="mt-3 bg-white p-3 rounded-md border shadow-sm">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-medium text-gray-700">选择要批量出库的子单号</h4>
+                        <label className="inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                            checked={relatedShipments.every((_, i) => batchSelections[shipments.indexOf(_)] === true)}
+                            onChange={toggleAllSelections}
+                          />
+                          <span className="ml-2 text-gray-700 text-sm">全选/取消全选</span>
+                        </label>
+                      </div>
+                      <ul className="divide-y divide-gray-200">
+                        {relatedShipments.map((related, idx) => {
+                          const shipmentIndex = shipments.indexOf(related);
+                          return (
+                            <li key={idx} className="py-2 flex justify-between items-center">
+                              <div>
+                                <span className="font-medium">{related.operationNumber}</span>
+                                <span className="ml-2 text-sm text-gray-500">
+                                  CBM: {related.cbm} | 入库日期: {related.inboundDate || '未知'}
+                                </span>
+                              </div>
+                              <label className="inline-flex items-center cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                  checked={batchSelections[shipmentIndex] === true}
+                                  onChange={() => toggleShipmentSelection(shipmentIndex)}
+                                />
+                                <span className="ml-2 text-gray-700 text-sm">选择</span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="col-span-2">
               <div className="rounded-md bg-blue-50 p-4">
@@ -272,11 +470,17 @@ export default function OutboundOperationPage() {
 
           {selectedShipment && storageFee && (
             <div className="rounded-md bg-gray-50 p-4">
-              <h3 className="text-lg font-medium text-gray-900">货物信息和费用预览</h3>
+              <h3 className="text-lg font-medium text-gray-900">
+                {enableBatchOutbound ? '批量出库货物信息和费用预览' : '货物信息和费用预览'}
+              </h3>
               <dl className="mt-2 grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2 md:grid-cols-3">
                 <div className="sm:col-span-1">
                   <dt className="text-sm font-medium text-gray-500">操作单号</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{selectedShipment.operationNumber}</dd>
+                  <dd className="mt-1 text-sm text-gray-900">
+                    {enableBatchOutbound 
+                      ? `${getBaseOperationNumber(selectedShipment.operationNumber)} (${selectedRelatedShipments.length + 1}个子单)` 
+                      : selectedShipment.operationNumber}
+                  </dd>
                 </div>
                 <div className="sm:col-span-1">
                   <dt className="text-sm font-medium text-gray-500">材料参数</dt>
@@ -284,7 +488,11 @@ export default function OutboundOperationPage() {
                 </div>
                 <div className="sm:col-span-1">
                   <dt className="text-sm font-medium text-gray-500">体积 (CBM)</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{selectedShipment.cbm}</dd>
+                  <dd className="mt-1 text-sm text-gray-900">
+                    {enableBatchOutbound && batchFeePreview 
+                      ? batchFeePreview.totalCBM.toFixed(4) 
+                      : selectedShipment.cbm}
+                  </dd>
                 </div>
                 <div className="sm:col-span-1">
                   <dt className="text-sm font-medium text-gray-500">入库日期</dt>
@@ -296,19 +504,45 @@ export default function OutboundOperationPage() {
                 </div>
                 <div className="sm:col-span-1">
                   <dt className="text-sm font-medium text-gray-500">仓储费用</dt>
-                  <dd className="mt-1 text-sm font-medium text-red-600">{storageFee.totalFee.toFixed(2)} USD</dd>
+                  <dd className="mt-1 text-sm font-medium text-red-600">
+                    {enableBatchOutbound && batchFeePreview 
+                      ? `${batchFeePreview.fee.totalFee.toFixed(2)} USD (合并计算)` 
+                      : `${storageFee.totalFee.toFixed(2)} USD`}
+                  </dd>
                 </div>
               </dl>
               <div className="mt-3 border-t border-gray-200 pt-3">
                 <div className="text-sm">
                   <span className="font-medium text-gray-700">费用明细：</span>
                   <ul className="ml-5 mt-1 list-inside list-disc text-sm text-gray-600">
-                    <li>0-7天: {storageFee.freeDays}天 × 0 USD/CBM/天 × {selectedShipment.cbm} CBM = {storageFee.freeDaysFee.toFixed(2)} USD (免费期)</li>
-                    <li>8-30天: {storageFee.standardDays}天 × 1 USD/CBM/天 × {selectedShipment.cbm} CBM = {storageFee.standardDaysFee.toFixed(2)} USD</li>
-                    <li>31+天: {storageFee.extendedDays}天 × 2 USD/CBM/天 × {selectedShipment.cbm} CBM = {storageFee.extendedDaysFee.toFixed(2)} USD</li>
-                    <li>总计: {storageFee.totalFee.toFixed(2)} USD</li>
+                    {enableBatchOutbound && batchFeePreview ? (
+                      <>
+                        <li>0-7天: {batchFeePreview.fee.freeDays}天 × 0 USD/CBM/天 × {batchFeePreview.totalCBM.toFixed(4)} CBM = {batchFeePreview.fee.freeDaysFee.toFixed(2)} USD (免费期)</li>
+                        <li>8-30天: {batchFeePreview.fee.standardDays}天 × 1 USD/CBM/天 × {batchFeePreview.totalCBM.toFixed(4)} CBM = {batchFeePreview.fee.standardDaysFee.toFixed(2)} USD</li>
+                        <li>31+天: {batchFeePreview.fee.extendedDays}天 × 2 USD/CBM/天 × {batchFeePreview.totalCBM.toFixed(4)} CBM = {batchFeePreview.fee.extendedDaysFee.toFixed(2)} USD</li>
+                        <li>总计: {batchFeePreview.fee.totalFee.toFixed(2)} USD (将按CBM比例分配到各子单)</li>
+                      </>
+                    ) : (
+                      <>
+                        <li>0-7天: {storageFee.freeDays}天 × 0 USD/CBM/天 × {selectedShipment.cbm} CBM = {storageFee.freeDaysFee.toFixed(2)} USD (免费期)</li>
+                        <li>8-30天: {storageFee.standardDays}天 × 1 USD/CBM/天 × {selectedShipment.cbm} CBM = {storageFee.standardDaysFee.toFixed(2)} USD</li>
+                        <li>31+天: {storageFee.extendedDays}天 × 2 USD/CBM/天 × {selectedShipment.cbm} CBM = {storageFee.extendedDaysFee.toFixed(2)} USD</li>
+                        <li>总计: {storageFee.totalFee.toFixed(2)} USD</li>
+                      </>
+                    )}
                   </ul>
                 </div>
+                {enableBatchOutbound && selectedRelatedShipments.length > 0 && (
+                  <div className="mt-3 bg-yellow-50 p-2 rounded">
+                    <h4 className="text-sm font-medium text-yellow-800">批量出库货物明细：</h4>
+                    <ul className="ml-5 mt-1 list-inside text-sm text-gray-600">
+                      <li>• {selectedShipment.operationNumber}: {selectedShipment.cbm} CBM</li>
+                      {selectedRelatedShipments.map((shipment, idx) => (
+                        <li key={idx}>• {shipment.operationNumber}: {shipment.cbm} CBM</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -325,7 +559,7 @@ export default function OutboundOperationPage() {
               className="rounded-md bg-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
               disabled={!selectedShipment}
             >
-              确认出库
+              {enableBatchOutbound ? `确认批量出库 (${selectedRelatedShipments.length + 1}个)` : "确认出库"}
             </button>
           </div>
         </form>
