@@ -183,8 +183,8 @@ const mergeShipmentGroups = (shipments: ShipmentWithDetails[]): ShipmentWithDeta
   const mergedShipments: ShipmentWithDetails[] = [];
   
   groupMap.forEach(group => {
-    if (group.length === 1) {
-      // 如果组内只有一个货物，直接添加
+    if (group.length === 1 && group[0]) {
+      // 如果组内只有一个货物，直接添加（确保不是undefined）
       mergedShipments.push(group[0]);
     } else if (group.length > 1) {
       // 确保组内有货物再进行合并
@@ -192,20 +192,28 @@ const mergeShipmentGroups = (shipments: ShipmentWithDetails[]): ShipmentWithDeta
       if (firstShipment) {
         const baseOp = getBaseOperationNumber(firstShipment.operationNumber);
         
+        // 使用安全的reduce函数计算总和 - 避免使用泛型语法
+        const safeReduce = function(items: any[], callback: (acc: number, item: any) => number, initialValue: number): number {
+          return items.reduce((sum, item) => {
+            if (item === undefined || item === null) return sum;
+            return callback(sum, item);
+          }, initialValue);
+        };
+        
         // 创建合并后的货物记录（确保类型安全）
         const mergedShipment: ShipmentWithDetails = {
           ...firstShipment,
           operationNumber: `${baseOp}(${group.length}个子单)`, // 显示为基础单号(N个子单)
-          quantity: group.reduce((sum, s) => sum + parseFloat(s.quantity.toString() || "0"), 0),
-          cbm: group.reduce((sum, s) => sum + parseFloat(s.cbm.toString() || "0"), 0).toFixed(4),
+          quantity: safeReduce(group, (sum, s) => sum + parseFloat(s.quantity.toString() || "0"), 0),
+          cbm: safeReduce(group, (sum, s) => sum + parseFloat(s.cbm.toString() || "0"), 0).toFixed(4),
           // 使用第一个货物的其他属性
           feeDetails: {
             ...firstShipment.feeDetails,
             // 重新计算合并后的费用
-            freeDaysFee: group.reduce((sum, s) => sum + s.feeDetails.freeDaysFee, 0),
-            standardDaysFee: group.reduce((sum, s) => sum + s.feeDetails.standardDaysFee, 0),
-            extendedDaysFee: group.reduce((sum, s) => sum + s.feeDetails.extendedDaysFee, 0),
-            totalFee: group.reduce((sum, s) => sum + s.feeDetails.totalFee, 0)
+            freeDaysFee: safeReduce(group, (sum, s) => sum + (s.feeDetails?.freeDaysFee || 0), 0),
+            standardDaysFee: safeReduce(group, (sum, s) => sum + (s.feeDetails?.standardDaysFee || 0), 0),
+            extendedDaysFee: safeReduce(group, (sum, s) => sum + (s.feeDetails?.extendedDaysFee || 0), 0),
+            totalFee: safeReduce(group, (sum, s) => sum + (s.feeDetails?.totalFee || 0), 0)
           }
         };
         
@@ -279,7 +287,7 @@ export default function StorageFeesPage() {
                 s.inboundDate === updatedShipment.inboundDate
               );
               
-              if (index !== -1) {
+              if (index !== -1 && storedShipments[index]) {
                 // 这里只是为了修复已出库货物显示为0的问题，不实际修改localStorage
                 // 如果需要持久化，可以在用户操作后修改localStorage
                 storedShipments[index].storageFee = feeDetails.totalFee.toFixed(2);
