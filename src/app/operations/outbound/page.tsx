@@ -80,7 +80,9 @@ const calculateStorageFee = (cbm: number, days: number): {
 
 // 格式化日期为YYYY-MM-DD
 const formatDate = (date: Date): string => {
-  return date.toISOString().split('T')[0];
+  const isoString = date.toISOString();
+  const parts = isoString.split('T');
+  return parts[0] || '';
 };
 
 // 获取今天的日期
@@ -90,7 +92,7 @@ const today = formatDate(new Date());
 const getBaseOperationNumber = (operationNumber: string): string => {
   // 匹配基本格式：字母+数字，可能后跟-数字
   const match = operationNumber.match(/^([A-Za-z]+\d+)(?:-\d+)?$/);
-  return match ? match[1] : operationNumber;
+  return match && match[1] ? match[1] : operationNumber;
 };
 
 export default function OutboundOperationPage() {

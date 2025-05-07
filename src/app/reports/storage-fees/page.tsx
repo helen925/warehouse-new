@@ -116,7 +116,7 @@ const formatCurrency = (value: number): string => {
 const getBaseOperationNumber = (operationNumber: string): string => {
   // 匹配基本格式：字母+数字，可能后跟-数字
   const match = operationNumber.match(/^([A-Za-z]+\d+)(?:-\d+)?$/);
-  return match ? match[1] : operationNumber;
+  return match && match[1] ? match[1] : operationNumber;
 };
 
 // 检查两个货物是否属于同一组（相同基础单号，相同入库日期，相同出库日期）
@@ -172,7 +172,11 @@ const mergeShipmentGroups = (shipments: ShipmentWithDetails[]): ShipmentWithDeta
       groupMap.set(groupKey, []);
     }
     
-    groupMap.get(groupKey)!.push(shipment);
+    // 确保存在再推入
+    const group = groupMap.get(groupKey);
+    if (group) {
+      group.push(shipment);
+    }
   });
   
   // 合并每个组内的货物
@@ -182,32 +186,34 @@ const mergeShipmentGroups = (shipments: ShipmentWithDetails[]): ShipmentWithDeta
     if (group.length === 1) {
       // 如果组内只有一个货物，直接添加
       mergedShipments.push(group[0]);
-    } else {
-      // 合并组内多个货物
+    } else if (group.length > 1) {
+      // 确保组内有货物再进行合并
       const firstShipment = group[0];
-      const baseOp = getBaseOperationNumber(firstShipment.operationNumber);
-      
-      // 创建合并后的货物记录
-      const mergedShipment: ShipmentWithDetails = {
-        ...firstShipment,
-        operationNumber: `${baseOp}(${group.length}个子单)`, // 显示为基础单号(N个子单)
-        quantity: group.reduce((sum, s) => sum + parseFloat(s.quantity.toString() || "0"), 0),
-        cbm: group.reduce((sum, s) => sum + parseFloat(s.cbm.toString() || "0"), 0).toFixed(4),
-        // 使用第一个货物的其他属性
-        feeDetails: {
-          ...firstShipment.feeDetails,
-          // 重新计算合并后的费用
-          freeDaysFee: group.reduce((sum, s) => sum + s.feeDetails.freeDaysFee, 0),
-          standardDaysFee: group.reduce((sum, s) => sum + s.feeDetails.standardDaysFee, 0),
-          extendedDaysFee: group.reduce((sum, s) => sum + s.feeDetails.extendedDaysFee, 0),
-          totalFee: group.reduce((sum, s) => sum + s.feeDetails.totalFee, 0)
-        }
-      };
-      
-      // 更新合并后的仓储费用
-      mergedShipment.storageFee = mergedShipment.feeDetails.totalFee.toFixed(2);
-      
-      mergedShipments.push(mergedShipment);
+      if (firstShipment) {
+        const baseOp = getBaseOperationNumber(firstShipment.operationNumber);
+        
+        // 创建合并后的货物记录（确保类型安全）
+        const mergedShipment: ShipmentWithDetails = {
+          ...firstShipment,
+          operationNumber: `${baseOp}(${group.length}个子单)`, // 显示为基础单号(N个子单)
+          quantity: group.reduce((sum, s) => sum + parseFloat(s.quantity.toString() || "0"), 0),
+          cbm: group.reduce((sum, s) => sum + parseFloat(s.cbm.toString() || "0"), 0).toFixed(4),
+          // 使用第一个货物的其他属性
+          feeDetails: {
+            ...firstShipment.feeDetails,
+            // 重新计算合并后的费用
+            freeDaysFee: group.reduce((sum, s) => sum + s.feeDetails.freeDaysFee, 0),
+            standardDaysFee: group.reduce((sum, s) => sum + s.feeDetails.standardDaysFee, 0),
+            extendedDaysFee: group.reduce((sum, s) => sum + s.feeDetails.extendedDaysFee, 0),
+            totalFee: group.reduce((sum, s) => sum + s.feeDetails.totalFee, 0)
+          }
+        };
+        
+        // 更新合并后的仓储费用
+        mergedShipment.storageFee = mergedShipment.feeDetails.totalFee.toFixed(2);
+        
+        mergedShipments.push(mergedShipment);
+      }
     }
   });
   
