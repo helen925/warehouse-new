@@ -1,14 +1,5 @@
 import "@/styles/globals.css";
-
-import { Inter } from "next/font/google";
 import Link from "next/link";
-
-const inter = Inter({
-	subsets: ["latin"],
-	variable: "--font-sans",
-	display: "swap",
-	preload: false,
-});
 
 export const metadata = {
 	title: "仓库管理系统",
@@ -23,7 +14,7 @@ export default function RootLayout({
 }) {
 	return (
 		<html lang="zh">
-			<body className={`font-sans ${inter.variable}`}>
+			<body className="font-sans">
 				<div className="flex min-h-screen flex-col">
 					<header className="bg-purple-800 shadow">
 						<nav className="container mx-auto flex items-center justify-between p-4">
@@ -34,9 +25,6 @@ export default function RootLayout({
 								<div className="hidden space-x-6 sm:flex">
 									<Link href="/shipments" className="text-white hover:text-purple-200">
 										货物管理
-									</Link>
-									<Link href="/operations/inbound" className="text-white hover:text-purple-200">
-										入库操作
 									</Link>
 									<Link href="/operations/outbound" className="text-white hover:text-purple-200">
 										出库操作
