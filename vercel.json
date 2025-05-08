@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "next.config.js",
+      "use": "@vercel/next"
+    }
+  ],
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "framework": "nextjs",
+  "env": {
+    "PGHOST": "@postgres_host",
+    "PGDATABASE": "@postgres_database",
+    "PGUSER": "@postgres_user",
+    "PGPASSWORD": "@postgres_password",
+    "POSTGRES_URL_NON_POOLING": "@postgres_url_non_pooling"
+  }
+} 
