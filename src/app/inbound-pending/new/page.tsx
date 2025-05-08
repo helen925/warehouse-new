@@ -89,23 +89,56 @@ export default function NewPendingInboundOrderPage() {
         return;
       }
       
-      // 创建新订单，添加调试信息
-      console.log("正在提交数据:", {
-        ...formData,
+      // 准备提交数据，只包含必要字段
+      const submitData = {
+        operationNumber: formData.operationNumber,
         expectedArrivalDate: isoDate,
+        status: formData.status,
+        quantity: Number(formData.quantity),
+        description: formData.description || undefined,
+        contactPerson: formData.contactPerson || undefined,
+        contactPhone: formData.contactPhone || undefined,
+        remarks: formData.remarks || undefined
+      };
+      
+      console.log("正在提交订单数据:", submitData);
+      
+      // 使用fetch提交数据
+      const response = await fetch('/api/pending-inbound-orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(submitData),
       });
       
-      const newOrder = await createPendingInboundOrder({
-        ...formData,
-        expectedArrivalDate: isoDate,
-        shipmentId: null // 新建订单时还没有关联货物
-      });
+      // 获取原始响应文本
+      const responseText = await response.text();
+      console.log("API响应:", response.status, responseText);
       
-      if (newOrder) {
+      // 解析JSON
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        console.error("解析响应JSON失败:", e);
+        throw new Error(`服务器返回了无效的JSON: ${responseText.slice(0, 100)}...`);
+      }
+      
+      // 处理错误响应
+      if (!response.ok) {
+        const errorMessage = responseData?.error || responseData?.message || "未知错误";
+        const errorDetails = responseData?.details || "";
+        throw new Error(`${errorMessage}${errorDetails ? `: ${errorDetails}` : ""}`);
+      }
+      
+      // 检查响应数据
+      if (responseData && (responseData.id || responseData.operation_number)) {
         // 创建成功，跳转到列表页
+        console.log("订单创建成功:", responseData);
         router.push("/inbound-pending");
       } else {
-        throw new Error("创建订单失败，服务器未返回数据");
+        throw new Error("创建订单失败，服务器返回的数据格式不正确");
       }
     } catch (error) {
       console.error("提交订单失败:", error);

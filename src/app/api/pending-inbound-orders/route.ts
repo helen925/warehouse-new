@@ -2,6 +2,7 @@ import { db } from "@/server/db";
 import { pendingInboundOrders } from "@/server/db/schema";
 import { eq, desc, asc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { sql } from "drizzle-orm";
 
 // GET: 获取所有待入库订单，可选按状态筛选
 export async function GET(request: NextRequest) {
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    console.log("接收到的请求数据:", body);
     
     // 验证必要字段
     if (!body.operationNumber) {
@@ -55,55 +57,53 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // 验证日期格式
-    let expectedDate;
     try {
-      expectedDate = new Date(body.expectedArrivalDate);
-      if (isNaN(expectedDate.getTime())) {
+      // 直接使用SQL插入语句
+      const result = await db.execute(sql`
+        INSERT INTO "仓库系统_pending_inbound_order" 
+        (operation_number, expected_arrival_date, status, quantity, description, contact_person, contact_phone, remarks)
+        VALUES 
+        (
+          ${body.operationNumber}, 
+          ${body.expectedArrivalDate}, 
+          ${body.status || "待提货"}, 
+          ${body.quantity || 1},
+          ${body.description || null},
+          ${body.contactPerson || null},
+          ${body.contactPhone || null},
+          ${body.remarks || null}
+        )
+        RETURNING id, operation_number, expected_arrival_date, status, quantity, description, contact_person, contact_phone, remarks
+      `);
+      
+      console.log("SQL执行结果:", result);
+      
+      // 检查结果
+      if (result && result.rows && result.rows.length > 0) {
+        return NextResponse.json(result.rows[0], { status: 201 });
+      } else {
         return NextResponse.json(
-          { error: "预计到仓日期格式无效" },
-          { status: 400 }
+          { error: "创建待入库订单失败，数据库未返回结果" },
+          { status: 500 }
         );
       }
-    } catch (error) {
+    } catch (dbError) {
+      console.error("数据库操作失败:", dbError);
       return NextResponse.json(
-        { error: "预计到仓日期格式无效", details: error instanceof Error ? error.message : "未知错误" },
-        { status: 400 }
-      );
-    }
-    
-    // 准备数据
-    const orderData = {
-      operationNumber: body.operationNumber,
-      expectedArrivalDate: body.expectedArrivalDate, // 使用原始ISO格式字符串
-      status: body.status || "待提货", // 默认状态：待提货
-      quantity: body.quantity || 1,
-      description: body.description || null,
-      contactPerson: body.contactPerson || null,
-      contactPhone: body.contactPhone || null,
-      remarks: body.remarks || null
-    };
-    
-    console.log("准备创建新订单:", orderData);
-    
-    // 创建新订单
-    const newOrder = await db.insert(pendingInboundOrders).values(orderData).returning();
-    
-    if (newOrder.length === 0) {
-      return NextResponse.json(
-        { error: "创建待入库订单失败" },
+        { 
+          error: "数据库操作失败", 
+          details: dbError instanceof Error ? dbError.message : "未知错误",
+          sql_error: true
+        },
         { status: 500 }
       );
     }
-    
-    return NextResponse.json(newOrder[0], { status: 201 });
   } catch (error) {
-    console.error("Error creating pending inbound order:", error);
+    console.error("创建待入库订单过程中发生错误:", error);
     return NextResponse.json(
       { 
         error: "创建待入库订单失败", 
-        details: error instanceof Error ? error.message : "未知错误",
-        stack: error instanceof Error ? error.stack : undefined 
+        message: error instanceof Error ? error.message : "未知错误"
       },
       { status: 500 }
     );

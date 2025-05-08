@@ -78,8 +78,27 @@ const main = async () => {
         "updated_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `, "Warehouse Record表创建");
+    
+    // 表3: 创建待入库订单表
+    await executeSQL(`
+      CREATE TABLE IF NOT EXISTS "仓库系统_pending_inbound_order" (
+        "id" SERIAL PRIMARY KEY,
+        "operation_number" VARCHAR(20) NOT NULL,
+        "expected_arrival_date" TIMESTAMP NOT NULL,
+        "status" VARCHAR(20) NOT NULL DEFAULT '待提货',
+        "quantity" INTEGER DEFAULT 1,
+        "description" TEXT,
+        "contact_person" VARCHAR(50),
+        "contact_phone" VARCHAR(20),
+        "remarks" TEXT,
+        "completed_at" TIMESTAMP,
+        "shipment_id" INTEGER,
+        "created_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        "updated_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `, "待入库订单表创建");
 
-    // 创建索引 - 拆分为3个独立的语句
+    // 创建索引 - 拆分为独立的语句
     await executeSQL(`
       CREATE INDEX IF NOT EXISTS "shipment_number_idx" ON "仓库系统_shipment" ("shipment_number")
     `, "Shipment Number索引创建");
@@ -91,6 +110,15 @@ const main = async () => {
     await executeSQL(`
       CREATE INDEX IF NOT EXISTS "shipment_id_idx" ON "仓库系统_warehouse_record" ("shipment_id")
     `, "Shipment ID索引创建");
+    
+    // 待入库订单表索引
+    await executeSQL(`
+      CREATE INDEX IF NOT EXISTS "pending_operation_number_idx" ON "仓库系统_pending_inbound_order" ("operation_number")
+    `, "待入库订单操作单号索引创建");
+    
+    await executeSQL(`
+      CREATE INDEX IF NOT EXISTS "pending_status_idx" ON "仓库系统_pending_inbound_order" ("status")
+    `, "待入库订单状态索引创建");
 
     // 创建外键约束
     await executeSQL(`
@@ -107,6 +135,22 @@ const main = async () => {
         END IF;
       END $$
     `, "外键约束创建");
+    
+    // 待入库订单与货物的外键关系
+    await executeSQL(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'fk_pending_order_shipment_id'
+        ) THEN
+          ALTER TABLE "仓库系统_pending_inbound_order"
+          ADD CONSTRAINT "fk_pending_order_shipment_id"
+          FOREIGN KEY ("shipment_id")
+          REFERENCES "仓库系统_shipment"("id")
+          ON DELETE SET NULL;
+        END IF;
+      END $$
+    `, "待入库订单外键约束创建");
 
     // 确保序列正确设置
     await executeSQL(`
@@ -128,6 +172,17 @@ const main = async () => {
         END IF;
       END $$
     `, "Warehouse Record序列检查和创建");
+    
+    // 待入库订单序列
+    await executeSQL(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE schemaname = 'public' AND sequencename = '仓库系统_pending_inbound_order_id_seq') THEN
+          CREATE SEQUENCE 仓库系统_pending_inbound_order_id_seq;
+          ALTER TABLE "仓库系统_pending_inbound_order" ALTER COLUMN id SET DEFAULT nextval('仓库系统_pending_inbound_order_id_seq');
+        END IF;
+      END $$
+    `, "待入库订单序列检查和创建");
 
     console.log('🎉 数据库迁移完成');
   } catch (error) {
