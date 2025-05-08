@@ -25,9 +25,5 @@
     "enabled": true,
     "silent": false
   },
-  "deploymentScope": "preview",
-  "installCommand": "npm install",
-  "buildEnvironment": {
-    "DEPLOY_TIMESTAMP": "2024-05-08T12:00:00Z"
-  }
+  "installCommand": "npm install"
 } 
