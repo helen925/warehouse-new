@@ -15,5 +15,19 @@
     "PGUSER": "@postgres_user",
     "PGPASSWORD": "@postgres_password",
     "POSTGRES_URL_NON_POOLING": "@postgres_url_non_pooling"
+  },
+  "git": {
+    "deploymentEnabled": {
+      "main": true
+    }
+  },
+  "github": {
+    "enabled": true,
+    "silent": false
+  },
+  "deploymentScope": "preview",
+  "installCommand": "npm install",
+  "buildEnvironment": {
+    "DEPLOY_TIMESTAMP": "2024-05-08T12:00:00Z"
   }
 } 
