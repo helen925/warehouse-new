@@ -115,11 +115,11 @@ export async function PUT(
 // DELETE: 删除待入库订单
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   try {
     // 先获取并保存params，避免直接访问params.id
-    const { id: idParam } = params;
+    const { id: idParam } = context.params;
     const id = parseInt(idParam);
     
     if (isNaN(id)) {
