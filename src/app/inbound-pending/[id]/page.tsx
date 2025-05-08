@@ -65,6 +65,8 @@ export default function PendingInboundOrderDetailPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [statusUpdateLoading, setStatusUpdateLoading] = useState(false);
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
 
   // 加载订单数据
   useEffect(() => {
@@ -190,6 +192,33 @@ export default function PendingInboundOrderDetailPage() {
       setShowDeleteConfirm(false);
     } finally {
       setDeleteLoading(false);
+    }
+  };
+
+  // 新增：直接更改状态
+  const handleStatusChange = async (newStatus: string) => {
+    if (!order || !order.id || order.status === newStatus || statusUpdateLoading) return;
+    
+    try {
+      setStatusUpdateLoading(true);
+      setError(null);
+      
+      // 发送更新请求，只更新状态
+      const updatedOrder = await updatePendingInboundOrder(order.id, { status: newStatus });
+      
+      if (updatedOrder) {
+        setOrder(updatedOrder);
+        // 同时更新editedOrder，以便编辑模式正确显示
+        setEditedOrder(prevState => prevState ? { ...prevState, status: newStatus } : null);
+        setShowStatusDropdown(false);
+      } else {
+        throw new Error("状态更新失败");
+      }
+    } catch (error) {
+      console.error("状态更新失败:", error);
+      setError("状态更新失败，请重试");
+    } finally {
+      setStatusUpdateLoading(false);
     }
   };
 
@@ -358,10 +387,50 @@ export default function PendingInboundOrderDetailPage() {
                       {order.completedAt && <option value="已入库">已入库</option>}
                     </select>
                   ) : (
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${statusColor.bg} ${statusColor.text}`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${statusColor.dot}`}></span>
-                      {order.status}
-                    </span>
+                    <div className="relative">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${statusColor.bg} ${statusColor.text}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${statusColor.dot}`}></span>
+                          {order.status}
+                        </span>
+                        {!order.completedAt && (
+                          <button 
+                            type="button"
+                            onClick={() => setShowStatusDropdown(!showStatusDropdown)}
+                            disabled={statusUpdateLoading}
+                            className="inline-flex items-center rounded-full p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none"
+                          >
+                            {statusUpdateLoading ? (
+                              <svg className="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                            ) : (
+                              <svg className="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                      
+                      {showStatusDropdown && !order.completedAt && (
+                        <div className="absolute right-0 mt-1 w-40 rounded-md bg-white shadow-lg z-10 border border-gray-200">
+                          <div className="py-1">
+                            {["待提货", "提货中", "已送仓库"].map((status) => (
+                              <button
+                                key={status}
+                                onClick={() => handleStatusChange(status)}
+                                disabled={order.status === status}
+                                className={`block w-full px-4 py-2 text-left text-sm ${order.status === status ? 'bg-gray-100 text-gray-500' : 'text-gray-700 hover:bg-gray-100'}`}
+                              >
+                                {status}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </dd>
               </div>

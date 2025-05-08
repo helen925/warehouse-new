@@ -9,7 +9,9 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
-    const id = parseInt(params.id);
+    // 先获取并保存params，避免直接访问params.id
+    const { id: idParam } = params;
+    const id = parseInt(idParam);
     
     if (isNaN(id)) {
       return NextResponse.json(
