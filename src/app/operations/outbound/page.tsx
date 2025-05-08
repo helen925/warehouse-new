@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Shipment } from "@/lib/api/shipments";
@@ -23,7 +23,8 @@ const formatCurrency = (value: number): string => {
   return `${value.toFixed(2)} USD`;
 };
 
-export default function OutboundPage() {
+// 创建一个客户端组件来使用 useSearchParams
+function OutboundContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const shipmentIdParam = searchParams.get('shipmentId');
@@ -85,7 +86,7 @@ export default function OutboundPage() {
     };
     
     fetchShipments();
-  }, [shipmentIdParam]);
+  }, [shipmentIdParam, outboundDate]);
   
   // 处理货物选择
   const handleShipmentSelect = (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -249,111 +250,73 @@ export default function OutboundPage() {
           
           {selectedShipment && (
             <>
-              <div className="mb-6 rounded-lg border bg-gray-50 p-4">
-                <h3 className="mb-2 text-lg font-medium">货物信息</h3>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div>
-                    <p className="text-sm text-gray-500">操作单号</p>
-                    <p className="font-medium">{selectedShipment.operationNumber}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">入库日期</p>
-                    <p className="font-medium">
-                      {new Date(selectedShipment.createdAt).toLocaleDateString('zh-CN')}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">目的地</p>
-                    <p className="font-medium">{selectedShipment.destination}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">体积 (CBM)</p>
-                    <p className="font-medium">{selectedShipment.cbm}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">实重 (kg)</p>
-                    <p className="font-medium">{selectedShipment.actualWeight}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">计费重</p>
-                    <p className="font-medium">{selectedShipment.totalWeight}</p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="mb-4">
-                <label htmlFor="outboundDate" className="mb-1 block text-sm font-medium text-gray-700">
-                  出库日期
-                </label>
-                <input
-                  type="date"
-                  id="outboundDate"
-                  name="outboundDate"
-                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500 sm:text-sm"
-                  value={outboundDate}
-                  onChange={handleOutboundDateChange}
-                  min={selectedShipment.createdAt.split('T')[0]}
-                  max={today}
-                  required
-                />
-              </div>
-              
-              <div className="mb-6 rounded-lg border bg-yellow-50 p-4">
-                <h3 className="mb-2 text-lg font-medium">费用计算</h3>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div>
-                    <p className="text-sm text-gray-500">存储天数</p>
-                    <p className="text-xl font-semibold">{storageDays} 天</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">体积 (CBM)</p>
-                    <p className="text-xl font-semibold">{selectedShipment.cbm}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">仓储费用</p>
-                    <p className="text-xl font-semibold text-red-600">
-                      {formatCurrency(storageFee)}
-                    </p>
+              <div className="mb-4 grid gap-4 md:grid-cols-2">
+                <div>
+                  <h3 className="mb-2 text-lg font-medium">货物详情</h3>
+                  <div className="rounded-md bg-gray-50 p-4">
+                    <p><span className="font-semibold">操作号:</span> {selectedShipment.operationNumber}</p>
+                    <p><span className="font-semibold">体积:</span> {selectedShipment.cbm} CBM</p>
+                    <p><span className="font-semibold">重量:</span> {selectedShipment.totalWeight} kg</p>
+                    <p><span className="font-semibold">目的地:</span> {selectedShipment.destination || '未指定'}</p>
+                    <p><span className="font-semibold">线路:</span> {selectedShipment.route || '未指定'}</p>
                   </div>
                 </div>
                 
-                <div className="mt-4">
-                  <h4 className="mb-1 text-sm font-medium">费用明细:</h4>
-                  <ul className="ml-4 list-disc text-sm">
-                    <li>
-                      0-7天: 免费
-                    </li>
-                    <li>
-                      8-30天: 1 USD/CBM/天
-                    </li>
-                    <li>
-                      30天以上: 2 USD/CBM/天
-                    </li>
-                  </ul>
+                <div>
+                  <h3 className="mb-2 text-lg font-medium">出库信息</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label htmlFor="outboundDate" className="mb-1 block text-sm font-medium text-gray-700">
+                        出库日期
+                      </label>
+                      <input
+                        type="date"
+                        id="outboundDate"
+                        name="outboundDate"
+                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500 sm:text-sm"
+                        value={outboundDate}
+                        onChange={handleOutboundDateChange}
+                        required
+                      />
+                    </div>
+                    
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">存储天数: <span className="font-bold">{storageDays} 天</span></p>
+                      <p className="text-sm font-medium text-gray-700">存储费用: <span className="font-bold">{formatCurrency(storageFee)}</span></p>
+                    </div>
+                  </div>
                 </div>
+              </div>
+              
+              <div className="mt-6">
+                <button
+                  type="submit"
+                  className="w-full rounded-md bg-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:bg-gray-400"
+                  disabled={processingState === "processing"}
+                >
+                  {processingState === "processing" ? "处理中..." : "确认出库"}
+                </button>
               </div>
             </>
           )}
-          
-          <div className="mt-6 flex justify-end space-x-3">
-            <Link
-              href="/shipments"
-              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
-            >
-              取消
-            </Link>
-            <button
-              type="submit"
-              className={`rounded-md bg-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
-                !selectedShipment || processingState === "processing" ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-              disabled={!selectedShipment || processingState === "processing"}
-            >
-              确认出库
-            </button>
-          </div>
         </form>
       </div>
     </main>
+  );
+}
+
+// 使用 Suspense 包装组件
+export default function OutboundPage() {
+  return (
+    <Suspense fallback={
+      <main className="container mx-auto px-4 py-8">
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold">货物出库</h1>
+          <p className="mt-2 text-gray-600">加载中...</p>
+        </div>
+      </main>
+    }>
+      <OutboundContent />
+    </Suspense>
   );
 } 
