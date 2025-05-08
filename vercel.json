@@ -1,12 +1,8 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "builds": [
-    {
-      "src": "next.config.js",
-      "use": "@vercel/next"
-    }
-  ],
   "buildCommand": "npm run build",
+  "installCommand": "npm install",
   "outputDirectory": ".next",
   "framework": "nextjs",
   "env": {
@@ -16,14 +12,7 @@
     "PGPASSWORD": "@postgres_password",
     "POSTGRES_URL_NON_POOLING": "@postgres_url_non_pooling"
   },
-  "git": {
-    "deploymentEnabled": {
-      "main": true
-    }
-  },
   "github": {
-    "enabled": true,
-    "silent": false
-  },
-  "installCommand": "npm install"
+    "enabled": true
+  }
 } 
