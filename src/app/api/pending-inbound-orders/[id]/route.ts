@@ -7,11 +7,11 @@ import { NextRequest, NextResponse } from "next/server";
 // GET: 获取单个待入库订单
 export async function GET(
   request: NextRequest,
-  context: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
   try {
     // 先获取并保存params，避免直接访问params.id
-    const { id: idParam } = context.params;
+    const { id: idParam } = params;
     const id = parseInt(idParam);
     
     if (isNaN(id)) {
@@ -45,11 +45,11 @@ export async function GET(
 // PUT: 更新待入库订单
 export async function PUT(
   request: NextRequest,
-  context: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
   try {
     // 先获取并保存params，避免直接访问params.id
-    const { id: idParam } = context.params;
+    const { id: idParam } = params;
     const id = parseInt(idParam);
     
     if (isNaN(id)) {
@@ -115,11 +115,11 @@ export async function PUT(
 // DELETE: 删除待入库订单
 export async function DELETE(
   request: NextRequest,
-  context: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
   try {
     // 先获取并保存params，避免直接访问params.id
-    const { id: idParam } = context.params;
+    const { id: idParam } = params;
     const id = parseInt(idParam);
     
     if (isNaN(id)) {

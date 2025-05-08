@@ -6,11 +6,11 @@ import { NextRequest, NextResponse } from "next/server";
 // PUT: 完成入库操作，将待入库订单标记为已完成，并关联到实际入库的货物
 export async function PUT(
   request: NextRequest,
-  context: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
   try {
     // 先获取并保存params，避免直接访问params.id
-    const { id: idParam } = context.params;
+    const { id: idParam } = params;
     const id = parseInt(idParam);
     
     if (isNaN(id)) {
