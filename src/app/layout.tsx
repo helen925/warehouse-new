@@ -23,6 +23,9 @@ export default function RootLayout({
 									仓库管理系统
 								</Link>
 								<div className="hidden space-x-6 sm:flex">
+									<Link href="/inbound-pending" className="text-white hover:text-purple-200">
+										待入库订单
+									</Link>
 									<Link href="/shipments" className="text-white hover:text-purple-200">
 										货物管理
 									</Link>

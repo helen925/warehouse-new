@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { calculateCBM } from "@/lib/utils/storage-fee";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { createShipment } from "@/lib/api/shipments";
+import { createWarehouseRecord } from "@/lib/api/warehouse-records";
 
 // 常见国家列表
 const countries = [
@@ -53,12 +55,13 @@ export default function NewShipmentPage() {
   const [materialWeight, setMaterialWeight] = useState<number | string>("");
   const [cbm, setCbm] = useState<number | string>("");
   const [totalWeight, setTotalWeight] = useState<number | string>("");
-  const [totalShippingWeight, setTotalShippingWeight] = useState<number | string>(""); // 总计费重
   const [destination, setDestination] = useState<string>("沙特"); // 默认选择沙特
   const [operationNumber, setOperationNumber] = useState<string>("");
   const [quantity, setQuantity] = useState<number | string>(1);
   const [remarks, setRemarks] = useState<string>("");
   const [inboundDate, setInboundDate] = useState<string>(today); // 入库日期，默认今天
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   // 计算CBM、材积重和计费重
   useEffect(() => {
@@ -100,57 +103,65 @@ export default function NewShipmentPage() {
     }
   }, [length, width, height, actualWeight, materialParam, materialWeight]);
 
-  // 计算总计费重 = 单件计费重 * 件数
-  useEffect(() => {
-    if (totalWeight && quantity) {
-      const weightNum = parseFloat(totalWeight.toString());
-      const quantityNum = parseFloat(quantity.toString());
-      
-      if (!isNaN(weightNum) && !isNaN(quantityNum)) {
-        const total = weightNum * quantityNum;
-        setTotalShippingWeight(total.toFixed(3));
-      }
-    } else {
-      setTotalShippingWeight("");
-    }
-  }, [totalWeight, quantity]);
-
   // 处理表单提交
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // 创建新货物对象
-    const newShipment = {
-      operationNumber,
-      materialParam,
-      quantity,
-      actualWeight,
-      length,
-      width,
-      height,
-      materialWeight,
-      cbm,
-      totalWeight, // 单件计费重
-      totalShippingWeight, // 总计费重
-      destination,
-      remarks,
-      inboundDate, // 入库日期
-      status: '在库' // 设置初始状态为"在库"
-    };
-    
-    // 从localStorage获取现有货物
-    const existingShipments = localStorage.getItem('shipments') 
-      ? JSON.parse(localStorage.getItem('shipments') || '[]') 
-      : [];
-    
-    // 添加新货物
-    const updatedShipments = [...existingShipments, newShipment];
-    
-    // 保存回localStorage
-    localStorage.setItem('shipments', JSON.stringify(updatedShipments));
-    
-    // 跳转到货物管理页面
-    router.push('/shipments');
+    if (!operationNumber || !actualWeight || !length || !width || !height) {
+      setError("请填写必填字段");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // 创建新货物对象
+      const shipmentData = {
+        shipmentNumber: `S${Date.now()}`, // 自动生成编号
+        operationNumber,
+        materialParam,
+        quantity,
+        actualWeight,
+        length,
+        width,
+        height,
+        materialWeight,
+        cbm,
+        totalWeight,
+        destination,
+        remarks
+      };
+      
+      // 调用API创建新货物
+      const newShipment = await createShipment(shipmentData);
+
+      // 创建入库记录
+      if (newShipment && newShipment.id) {
+        try {
+          await createWarehouseRecord({
+            shipmentId: newShipment.id,
+            inboundDate: inboundDate || new Date().toISOString(),
+            status: 'in_warehouse',
+            freeDays: 7,
+            standardRate: '1.00',
+            extendedRate: '2.00',
+            standardDaysLimit: 30
+          });
+          console.log('成功创建入库记录');
+        } catch (recordErr) {
+          console.error('创建入库记录失败:', recordErr);
+          // 继续执行，不阻止页面跳转
+        }
+      }
+
+      // 跳转到货物列表页面
+      router.push('/shipments');
+    } catch (err) {
+      console.error("创建货物失败:", err);
+      setError("创建货物失败，请稍后重试");
+      setLoading(false);
+    }
   };
 
   return (
@@ -159,6 +170,12 @@ export default function NewShipmentPage() {
         <h1 className="text-3xl font-bold">添加新货物</h1>
         <p className="mt-2 text-gray-600">填写货物基本信息（添加即入库）</p>
       </div>
+
+      {error && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4">
+          <p className="text-red-700">{error}</p>
+        </div>
+      )}
 
       <style jsx global>{`
         /* 移除数字输入框的上下箭头 */
@@ -201,7 +218,6 @@ export default function NewShipmentPage() {
                   <th className="border px-3 py-2 bg-gray-50 font-medium">材重(kg)</th>
                   <th className="border px-3 py-2 bg-gray-50 font-medium">单件方数(CBM)</th>
                   <th className="border px-3 py-2 bg-gray-50 font-medium">单件计费重</th>
-                  <th className="border px-3 py-2 bg-gray-50 font-medium">总计费重</th>
                 </tr>
               </thead>
               <tbody>
@@ -355,18 +371,6 @@ export default function NewShipmentPage() {
                     />
                     <div className="text-xs text-gray-500">自动计算</div>
                   </td>
-                  <td className="border px-3 py-2 bg-green-50">
-                    <input
-                      type="text"
-                      name="totalShippingWeight"
-                      id="totalShippingWeight"
-                      className="no-border-input bg-transparent"
-                      placeholder="例如: 45.000"
-                      value={totalShippingWeight}
-                      readOnly
-                    />
-                    <div className="text-xs text-gray-500">自动计算</div>
-                  </td>
                 </tr>
               </tbody>
             </table>
@@ -432,9 +436,10 @@ export default function NewShipmentPage() {
             </Link>
             <button
               type="submit"
-              className="rounded-md bg-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+              className={`rounded-md bg-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={loading}
             >
-              保存并入库
+              {loading ? '保存中...' : '保存并入库'}
             </button>
           </div>
         </form>

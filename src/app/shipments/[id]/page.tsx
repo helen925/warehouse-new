@@ -4,26 +4,51 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 
-// 定义货物接口
-interface Shipment {
+// 定义本地货物接口，与页面上使用的字段匹配
+interface ShipmentDetails {
+  id: number;
+  shipmentNumber: string;
   operationNumber: string;
-  materialParam: string | number;
-  quantity: string | number;
-  actualWeight: string | number;
-  length: string | number;
-  width: string | number;
-  height: string | number;
-  materialWeight: string | number;
-  cbm: string | number;
-  totalWeight: string | number;
-  totalShippingWeight?: string | number;
-  destination: string;
+  materialTypeCode?: string;
+  materialParam?: string | number;
+  quantity: number;
+  actualWeight: string;
+  length: string;
+  width: string;
+  height: string;
+  materialWeight?: string;
+  perimeter?: string;
+  cbm: string;
+  minWeightPerPiece?: string;
+  totalWeight: string;
+  destination?: string;
+  route?: string;
   remarks?: string;
+  createdAt: string;
+  updatedAt?: string;
   status?: string;
   inboundDate?: string;
   outboundDate?: string;
   storageDays?: number;
   storageFee?: string | number;
+  totalShippingWeight?: string;
+}
+
+// 定义仓库记录接口
+interface WarehouseRecord {
+  id: number;
+  shipmentId: number;
+  inboundDate: string;
+  outboundDate?: string;
+  status: string;
+  storageDays?: number;
+  storageFee?: string;
+  freeDays: number;
+  standardRate: string;
+  extendedRate: string;
+  standardDaysLimit: number;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 // 格式化日期显示
@@ -92,13 +117,13 @@ const countries = [
 export default function ShipmentDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const [shipment, setShipment] = useState<Shipment | null>(null);
-  const [editedShipment, setEditedShipment] = useState<Shipment | null>(null);
+  const [shipment, setShipment] = useState<ShipmentDetails | null>(null);
+  const [editedShipment, setEditedShipment] = useState<ShipmentDetails | null>(null);
+  const [warehouseRecord, setWarehouseRecord] = useState<WarehouseRecord | null>(null);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [shipmentIndex, setShipmentIndex] = useState<number>(-1);
-  const [allShipments, setAllShipments] = useState<Shipment[]>([]);
+  const [savingChanges, setSavingChanges] = useState<boolean>(false);
 
   useEffect(() => {
     // 获取货物ID
@@ -109,33 +134,58 @@ export default function ShipmentDetailPage() {
       return;
     }
 
-    // 从localStorage获取所有货物
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('shipments');
-      if (stored) {
-        const shipments = JSON.parse(stored);
-        setAllShipments(shipments);
+    // 从API获取数据
+    const fetchData = async () => {
+      try {
+        setLoading(true);
         
-        // 货物ID是从1开始的，而数组索引从0开始
-        const index = parseInt(shipmentId.toString()) - 1;
-        setShipmentIndex(index);
-        
-        if (index >= 0 && index < shipments.length) {
-          setShipment(shipments[index]);
-          setEditedShipment(JSON.parse(JSON.stringify(shipments[index]))); // 深拷贝
-        } else {
-          setError("找不到该货物");
+        // 先从all shipments API获取所有货物
+        const response = await fetch(`/api/shipments?t=${Date.now()}`);
+        if (!response.ok) {
+          throw new Error(`获取货物失败: ${response.status}`);
         }
-      } else {
-        setError("没有找到货物数据");
+        
+        const shipments = await response.json();
+        const shipmentData = shipments.find((s: any) => s.id === Number(shipmentId));
+        
+        if (!shipmentData) {
+          setError("找不到该货物");
+          setLoading(false);
+          return;
+        }
+        
+        // 获取仓库记录
+        const warehouseResponse = await fetch(`/api/warehouse-records?shipmentId=${shipmentId}`);
+        const records = await warehouseResponse.json();
+        const record = records.length > 0 ? records[0] : null;
+        
+        // 将数据合并作为内部使用的shipment对象
+        const enhancedShipment: ShipmentDetails = {
+          ...shipmentData,
+          inboundDate: record?.inboundDate || shipmentData.createdAt,
+          outboundDate: record?.outboundDate,
+          storageDays: record?.storageDays,
+          storageFee: record?.storageFee,
+          status: shipmentData.route === '已出库' ? '已出库' : '在库',
+          materialParam: shipmentData.materialTypeCode || "6000"
+        };
+        
+        setShipment(enhancedShipment);
+        setEditedShipment(JSON.parse(JSON.stringify(enhancedShipment))); // 深拷贝
+        setWarehouseRecord(record);
+        setLoading(false);
+      } catch (err) {
+        console.error("加载数据失败:", err);
+        setError("加载数据失败");
+        setLoading(false);
       }
-    }
+    };
     
-    setLoading(false);
+    fetchData();
   }, [params.id]);
 
   // 计算仓储费用（如果货物在库）
-  const calculateStorageFee = (shipment: Shipment): string => {
+  const calculateStorageFee = (shipment: ShipmentDetails): string => {
     if (shipment.status === '已出库' && shipment.storageFee) {
       return `${shipment.storageFee} USD`;
     }
@@ -181,10 +231,10 @@ export default function ShipmentDetailPage() {
   };
 
   // 处理表单输入变化
-  const handleInputChange = (field: keyof Shipment, value: string | number) => {
+  const handleInputChange = (field: keyof ShipmentDetails, value: string | number) => {
     if (!editedShipment) return;
     
-    const updatedShipment = { ...editedShipment, [field]: value };
+    const updatedShipment = { ...editedShipment, [field]: value } as ShipmentDetails;
     
     // 如果修改了入库日期，重新计算存储天数和仓储费用
     if (field === 'inboundDate') {
@@ -210,7 +260,7 @@ export default function ShipmentDetailPage() {
       const length = parseFloat(updatedShipment.length.toString() || "0");
       const width = parseFloat(updatedShipment.width.toString() || "0");
       const height = parseFloat(updatedShipment.height.toString() || "0");
-      const materialParam = parseFloat(updatedShipment.materialParam.toString() || "6000");
+      const materialParam = parseFloat(updatedShipment.materialParam?.toString() || "6000");
       const actualWeight = parseFloat(updatedShipment.actualWeight.toString() || "0");
       const quantity = parseFloat(updatedShipment.quantity.toString() || "1");
       
@@ -317,23 +367,138 @@ export default function ShipmentDetailPage() {
   };
 
   // 保存编辑
-  const handleSaveEdit = () => {
-    if (!editedShipment || shipmentIndex < 0 || !allShipments.length) return;
+  const handleSaveEdit = async () => {
+    if (!editedShipment || !editedShipment.id) return;
     
-    // 更新本地数据
-    const updatedShipments = [...allShipments];
-    updatedShipments[shipmentIndex] = editedShipment;
-    
-    // 保存回localStorage
-    localStorage.setItem('shipments', JSON.stringify(updatedShipments));
-    
-    // 更新状态
-    setShipment(editedShipment);
-    setAllShipments(updatedShipments);
-    setIsEditing(false);
-    
-    // 显示成功提示
-    alert("修改已保存");
+    try {
+      setSavingChanges(true);
+      
+      // 转换编辑后的数据为API格式
+      const apiShipmentData = {
+        operationNumber: editedShipment.operationNumber,
+        materialTypeCode: editedShipment.materialParam?.toString(),
+        quantity: Number(editedShipment.quantity),
+        actualWeight: editedShipment.actualWeight?.toString(),
+        length: editedShipment.length?.toString(),
+        width: editedShipment.width?.toString(),
+        height: editedShipment.height?.toString(),
+        materialWeight: editedShipment.materialWeight?.toString(),
+        cbm: editedShipment.cbm?.toString(),
+        totalWeight: editedShipment.totalWeight?.toString(),
+        destination: editedShipment.destination || "",
+        route: editedShipment.status === '已出库' ? '已出库' : undefined,
+        remarks: editedShipment.remarks || ""
+      };
+      
+      // 调用API更新货物信息
+      const response = await fetch('/api/shipments', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ id: editedShipment.id, ...apiShipmentData }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`更新货物失败: ${response.statusText}`);
+      }
+      
+      // 确保有入库日期数据
+      let formattedInboundDate = editedShipment.inboundDate;
+      
+      // 如果入库日期是通过日期选择器修改的，它可能只有日期部分，需要确保格式正确
+      if (formattedInboundDate && !formattedInboundDate.includes(' ') && !formattedInboundDate.includes('T')) {
+        // 添加时间部分，确保格式为 YYYY-MM-DD HH:MM:SS 或 ISO 格式
+        formattedInboundDate = `${formattedInboundDate}T00:00:00`;
+      }
+      
+      console.log("更新的入库日期:", formattedInboundDate);
+      
+      // 如果有仓库记录，也要更新仓库记录
+      if (warehouseRecord && warehouseRecord.id) {
+        // 计算存储天数
+        if (!formattedInboundDate) {
+          console.error("入库日期为空，使用当前日期");
+          formattedInboundDate = new Date().toISOString();
+        }
+        
+        const newInboundDate = new Date(formattedInboundDate);
+        const currentDate = warehouseRecord.outboundDate 
+          ? new Date(warehouseRecord.outboundDate) 
+          : new Date();
+          
+        const storageDays = Math.ceil(
+          (currentDate.getTime() - newInboundDate.getTime()) / (1000 * 60 * 60 * 24)
+        );
+        
+        console.log("计算的存储天数:", storageDays, "入库日期:", formattedInboundDate);
+        
+        const warehouseData = {
+          inboundDate: formattedInboundDate,
+          storageDays: storageDays > 0 ? storageDays : 1
+        };
+        
+        console.log("提交更新仓库记录数据:", warehouseData);
+        
+        const warehouseResponse = await fetch('/api/warehouse-records', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ id: warehouseRecord.id, ...warehouseData }),
+        });
+        
+        if (!warehouseResponse.ok) {
+          const errorText = await warehouseResponse.text();
+          console.warn("更新仓库记录失败:", warehouseResponse.status, errorText);
+        } else {
+          console.log("仓库记录更新成功");
+        }
+      } else if (editedShipment.inboundDate) {
+        // 如果没有仓库记录，但有入库日期，创建新记录
+        const newRecord = {
+          shipmentId: editedShipment.id,
+          inboundDate: formattedInboundDate,
+          status: "in_warehouse",
+          freeDays: 7,
+          standardRate: "1.00",
+          extendedRate: "2.00",
+          standardDaysLimit: 30,
+        };
+        
+        console.log("创建新仓库记录:", newRecord);
+        
+        const createResponse = await fetch('/api/warehouse-records', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(newRecord),
+        });
+        
+        if (!createResponse.ok) {
+          const errorText = await createResponse.text();
+          console.warn("创建仓库记录失败:", createResponse.status, errorText);
+        } else {
+          console.log("新仓库记录创建成功");
+        }
+      }
+      
+      // 更新状态
+      setShipment(editedShipment);
+      setIsEditing(false);
+      setSavingChanges(false);
+      
+      // 显示成功提示
+      alert("修改已保存");
+      
+      // 刷新页面以获取最新数据
+      window.location.reload();
+    } catch (error) {
+      console.error("保存失败:", error);
+      alert("保存失败: " + (error instanceof Error ? error.message : "未知错误"));
+      setSavingChanges(false);
+    }
   };
 
   // 取消编辑
@@ -384,6 +549,7 @@ export default function ShipmentDetailPage() {
                 <button
                   onClick={() => setIsEditing(true)}
                   className="rounded-md bg-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-purple-700"
+                  disabled={savingChanges}
                 >
                   编辑信息
                 </button>
@@ -399,12 +565,14 @@ export default function ShipmentDetailPage() {
                 <button
                   onClick={handleSaveEdit}
                   className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-green-700"
+                  disabled={savingChanges}
                 >
-                  保存修改
+                  {savingChanges ? "保存中..." : "保存修改"}
                 </button>
                 <button
                   onClick={handleCancelEdit}
                   className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+                  disabled={savingChanges}
                 >
                   取消编辑
                 </button>
@@ -441,7 +609,7 @@ export default function ShipmentDetailPage() {
                     {isEditing ? (
                       <select
                         className="w-full border rounded px-2 py-1"
-                        value={editedShipment.destination}
+                        value={editedShipment.destination || ""}
                         onChange={(e) => handleInputChange('destination', e.target.value)}
                       >
                         {countries.map((country) => (
@@ -462,7 +630,7 @@ export default function ShipmentDetailPage() {
                       <input
                         type="date"
                         className="border rounded px-2 py-1"
-                        value={editedShipment.inboundDate || ""}
+                        value={editedShipment.inboundDate ? editedShipment.inboundDate.split(' ')[0] : ""}
                         onChange={(e) => handleInputChange('inboundDate', e.target.value)}
                       />
                     ) : (
@@ -477,7 +645,7 @@ export default function ShipmentDetailPage() {
                       <input
                         type="date"
                         className="border rounded px-2 py-1"
-                        value={editedShipment.outboundDate || ""}
+                        value={editedShipment.outboundDate ? editedShipment.outboundDate.split(' ')[0] : ""}
                         onChange={(e) => handleInputChange('outboundDate', e.target.value)}
                       />
                     ) : (
@@ -511,7 +679,7 @@ export default function ShipmentDetailPage() {
                     {isEditing ? (
                       <select
                         className="border rounded px-2 py-1"
-                        value={editedShipment.materialParam}
+                        value={editedShipment.materialParam || "6000"}
                         onChange={(e) => handleInputChange('materialParam', e.target.value)}
                       >
                         <option value="5000">5000</option>
@@ -737,7 +905,7 @@ export default function ShipmentDetailPage() {
           <div className="space-x-3">
             {!isEditing && shipment.status !== '已出库' && (
               <Link
-                href={`/operations/outbound?shipmentId=${parseInt(params.id as string)}`}
+                href={`/operations/outbound?shipmentId=${Number(params.id)}`}
                 className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-green-700"
               >
                 出库操作
