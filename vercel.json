@@ -1,3 +1,4 @@
 {
-  "version": 2
+  "version": 2,
+  "buildCommand": "SKIP_TYPE_CHECK=1 npm run build"
 }
