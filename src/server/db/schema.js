@@ -74,6 +74,33 @@ export const warehouseRecords = pgTable(
   })
 );
 
+// 待入库订单表
+export const pendingInboundOrders = pgTable(
+  "pending_inbound_order",
+  {
+    id: serial("id").primaryKey(),
+    operationNumber: varchar("operation_number", { length: 20 }).notNull(),
+    expectedArrivalDate: timestamp("expected_arrival_date", { mode: 'string' }).notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("待提货"), // 提货中, 已送仓库, 待提货
+    quantity: integer("quantity").default(1),
+    description: text("description"), // 货物描述
+    contactPerson: varchar("contact_person", { length: 50 }), // 联系人
+    contactPhone: varchar("contact_phone", { length: 20 }), // 联系电话
+    remarks: text("remarks"), // 备注信息
+    completedAt: timestamp("completed_at", { mode: 'string' }), // 完成入库时间
+    shipmentId: integer("shipment_id"), // 关联的入库货物ID，入库后填写
+    createdAt: timestamp("created_at", { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { mode: 'string' })
+      .defaultNow(),
+  },
+  (example) => ({
+    operationNumberIdx: index("pending_operation_number_idx").on(example.operationNumber),
+    statusIdx: index("pending_status_idx").on(example.status),
+  })
+);
+
 export const shipmentRelations = relations(shipments, ({ many }) => ({
   warehouseRecords: many(warehouseRecords),
 }));
@@ -82,5 +109,22 @@ export const warehouseRecordRelations = relations(warehouseRecords, ({ one }) =>
   shipment: one(shipments, {
     fields: [warehouseRecords.shipmentId],
     references: [shipments.id],
+  }),
+}));
+
+// 定义关系
+export const pendingInboundOrderRelations = relations(pendingInboundOrders, ({ one }) => ({
+  shipment: one(shipments, {
+    fields: [pendingInboundOrders.shipmentId],
+    references: [shipments.id],
+    relationName: "pendingOrder_shipment",
+  }),
+}));
+
+export const shipmentPendingOrderRelations = relations(shipments, ({ one }) => ({
+  pendingOrder: one(pendingInboundOrders, {
+    fields: [shipments.id],
+    references: [pendingInboundOrders.shipmentId],
+    relationName: "shipment_pendingOrder",
   }),
 })); 
